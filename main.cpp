@@ -48,6 +48,20 @@ int main(int argc, char* argv[]) {
         SDL_Quit();
         return 1;
     }
+    // Load main menu background
+    SDL_Texture* menu_bg_tex = nullptr;
+    {
+        SDL_Surface* surf = IMG_Load("assets/Labyrinth_of_Moravor_Cover_800x600.png");
+        if (!surf) {
+            std::cerr << "IMG_Load failed for menu background: " << IMG_GetError() << std::endl;
+        } else {
+            menu_bg_tex = SDL_CreateTextureFromSurface(ren, surf);
+            SDL_FreeSurface(surf);
+            if (!menu_bg_tex) {
+                std::cerr << "SDL_CreateTextureFromSurface failed for menu background: " << SDL_GetError() << std::endl;
+            }
+        }
+    }
     if (!load_dungeon_textures(ren)) {
         std::cerr << "Failed to load dungeon textures!" << std::endl;
         // Cleanup order: free textures, quit IMG, destroy renderer/window, quit SDL
@@ -147,6 +161,11 @@ int main(int argc, char* argv[]) {
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         if (in_menu) {
+            // Draw menu background image if loaded
+            if (menu_bg_tex) {
+                SDL_Rect bg_rect = {0, 0, 800, 600};
+                SDL_RenderCopy(ren, menu_bg_tex, nullptr, &bg_rect);
+            }
             // Draw menu
             const int menu_x = 300, menu_y = 200, menu_w = 200, menu_h = 60;
             for (int i = 0; i < MENU_COUNT; ++i) {
@@ -182,6 +201,8 @@ int main(int argc, char* argv[]) {
         SDL_RenderPresent(ren);
     }
     // Cleanup resources in reverse order of creation
+    // Free menu background texture
+    if (menu_bg_tex) SDL_DestroyTexture(menu_bg_tex);
     TTF_CloseFont(font);
     TTF_Quit();
     free_dungeon_textures();

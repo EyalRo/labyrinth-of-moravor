@@ -19,6 +19,9 @@ Makefile
 *.dylib
 *.app
 
+# Project-specific build artifacts
+moravor
+
 # Editor and OS files
 *~
 *.swp
