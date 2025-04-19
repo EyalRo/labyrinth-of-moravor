@@ -1,0 +1,51 @@
+# C++/CMake/SDL typical .gitignore
+
+# Build directories
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Compiled object files and binaries
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+*.out
+*.a
+*.lib
+*.dylib
+*.app
+
+# Editor and OS files
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# If you have generated or cached images/fonts, ignore them by directory, e.g.:
+# cache/*.png
+# cache/*.ttf
+
+# User/project-specific
+*.log
+*.tmp
+
+# Ignore third-party libraries (if you add any submodules or vendor code)
+# third_party/
+
+# Ignore VSCode/CLion/QtCreator project files (optional)
+.vscode/
+.idea/
+*.user
+*.pro.user
+*.qbs.user
+*.codelite
+*.workspace
+*.code-workspace
+
+# Ignore generated files
+compile_commands.json
