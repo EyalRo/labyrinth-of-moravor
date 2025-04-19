@@ -145,7 +145,7 @@ void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
         side = 1;
       }
       char tile = get_tile(map_x, map_y);
-      if (tile == TILE_WALL || tile == TILE_DOORWAY)
+      if (tile == TILE_WALL || tile == TILE_ENTRANCE || tile == TILE_EXIT)
         hit = 1;
     }
     // Calculate distance to wall
@@ -164,9 +164,11 @@ void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
       draw_end = top_h;
     // Draw the vertical wall slice
     char tile = get_tile(map_x, map_y);
-    if (tile == TILE_DOORWAY) {
-        // Draw doorways as dark gray
-        SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
+    if (tile == TILE_ENTRANCE) {
+        SDL_SetRenderDrawColor(ren, 20, 80, 20, 255); // green
+        SDL_RenderDrawLine(ren, x, draw_start, x, draw_end);
+    } else if (tile == TILE_EXIT) {
+        SDL_SetRenderDrawColor(ren, 80, 20, 30, 255); // maroon
         SDL_RenderDrawLine(ren, x, draw_start, x, draw_end);
     } else if (g_wall_tex && tile == TILE_WALL) {
       int tex_w, tex_h;
@@ -320,8 +322,10 @@ void render_minimap(SDL_Renderer *ren, const Player &player, int win_w,
                        cell_h - 1};
       if (level_data[j][i] == TILE_WALL) {
         SDL_SetRenderDrawColor(ren, 80, 80, 80, 255);
-      } else if (level_data[j][i] == TILE_DOORWAY) {
-        SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
+      } else if (level_data[j][i] == TILE_ENTRANCE) {
+        SDL_SetRenderDrawColor(ren, 20, 80, 20, 255);
+      } else if (level_data[j][i] == TILE_EXIT) {
+        SDL_SetRenderDrawColor(ren, 80, 20, 30, 255);
       } else {
         SDL_SetRenderDrawColor(ren, 160, 160, 160, 255);
       }

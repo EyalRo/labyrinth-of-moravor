@@ -13,6 +13,7 @@ add_executable(moravor
     render.cpp
     player.cpp
     level.cpp
+    random_floor.cpp
     ${ENGINE_SRC} ${GAME_SRC}
 )
 

@@ -5,6 +5,14 @@
 #include "level.h"
 #include "player.h"
 #include "render.h"
+#include "random_floor.h"
+#include <vector>
+
+struct FloorData {
+    std::vector<std::string> map;
+    std::pair<int,int> entrance, exit;
+};
+static std::vector<FloorData> floors;
 
 int main(int argc, char* argv[]) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -82,6 +90,39 @@ int main(int argc, char* argv[]) {
     int mouse_x = 0, mouse_y = 0;
     bool in_game = false;
     // --- Player and Level State ---
+    // Initialize persistent floors
+    floors.clear();
+    // Static map as floor 0
+    // Static map with correct exit position
+    std::vector<std::string> static_map = {
+        "################",
+        "#..............#",
+        "#..##..##..##..#",
+        "#..#....#..#...#",
+        "#..#....#..#...#",
+        "#..###.##..#...#",
+        "#..............#",
+        "#.####.###.##..#",
+        "#..............#",
+        "#..##..##..##..#",
+        "#..#....#..#...#",
+        "#..#....#..#...#",
+        "#..###.##..#...#",
+        "##############X#"
+    };
+    // Find exit position for static map
+    std::pair<int,int> static_exit = {-1, -1};
+    for (int y = 0; y < (int)static_map.size(); ++y) {
+        for (int x = 0; x < (int)static_map[0].size(); ++x) {
+            if (static_map[y][x] == 'D') static_exit = {x, y};
+        }
+    }
+    floors.push_back(FloorData{
+        static_map,
+        {1,1}, static_exit
+    });
+    set_level_data(floors[0].map);
+
     Player player;
     player_init(player);
 
@@ -150,12 +191,95 @@ int main(int argc, char* argv[]) {
                     static const int dy[4] = {-1, 0, 1, 0};
                     int nx = player.x + dx[player.dir];
                     int ny = player.y + dy[player.dir];
-                    if (get_tile(nx, ny) == TILE_DOORWAY) {
-                        // Doorway effect: for now, reset player to start (stub for next level)
-                        player.x = 1;
-                        player.y = 1;
-                        // Optionally, print a message to console
-                        std::cout << "Doorway entered! (Stub: next level)" << std::endl;
+                    int floor = get_current_floor();
+                    std::pair<int,int> curr_entrance = get_entrance_pos();
+                    std::pair<int,int> curr_exit = get_exit_pos();
+                    char tile = get_tile(nx, ny);
+                    if (tile == TILE_EXIT || tile == TILE_ENTRANCE) {
+                        if (tile == TILE_EXIT) {
+                            // Max floor check
+                            if (floor + 1 >= 10) {
+                                // End game, return to main menu
+                                in_game = false;
+                                in_menu = true;
+                                continue;
+                            }
+                            // Go to next floor (persist)
+                            set_current_floor(floor + 1);
+                            if (floor + 1 < (int)floors.size()) {
+                                // Already generated, just load
+                                set_level_data(floors[floor + 1].map);
+                                // Always place player by entrance of new floor, facing away from it
+                                std::pair<int,int> entrance = floors[floor + 1].entrance;
+                                int dx[4] = {0,1,0,-1}, dy[4] = {-1,0,1,0};
+                                int ex = entrance.first, ey = entrance.second;
+                                for (int d = 0; d < 4; ++d) {
+                                    int px = ex + dx[d], py = ey + dy[d];
+                                    if (px >= 0 && px < MAP_W && py >= 0 && py < MAP_H && get_tile(px, py) == TILE_FLOOR) {
+                                        player.x = px;
+                                        player.y = py;
+                                        player.dir = d; // face the direction of the doorway (opposite of entry)
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // Generate new floor
+                                std::pair<int,int> entrance, exitp;
+                                std::vector<std::string> next_map = generate_random_floor(MAP_W, MAP_H, entrance, exitp);
+                                floors.push_back(FloorData{next_map, entrance, exitp});
+                                set_level_data(next_map);
+                                // Place player by entrance
+                                int dx[4] = {0,1,0,-1}, dy[4] = {-1,0,1,0};
+                                int ex = entrance.first, ey = entrance.second;
+                                for (int d = 0; d < 4; ++d) {
+                                    int px = ex + dx[d], py = ey + dy[d];
+                                    if (px >= 0 && px < MAP_W && py >= 0 && py < MAP_H && get_tile(px, py) == TILE_FLOOR) {
+                                        player.x = px;
+                                        player.y = py;
+                                        player.dir = d; // face the direction of the doorway (opposite of entry)
+                                        break;
+                                    }
+                                }
+                            }
+                        } else if (get_tile(nx, ny) == TILE_ENTRANCE) {
+                            // Go to previous floor
+                            if (floor == 0) {
+                                // First level has no entrance, do nothing
+                                break;
+                            }
+                            set_current_floor(floor - 1);
+                            if (floor - 1 == 0) {
+                                // Static map
+                                set_level_data(floors[0].map);
+                                // Place player adjacent to exit doorway, facing inward
+                                std::pair<int,int> static_exit = get_exit_pos();
+                                int ex = static_exit.first, ey = static_exit.second;
+                                int px = ex, py = ey;
+                                // Try all 4 inward directions
+                                if (ex > 0 && get_tile(ex-1, ey) == TILE_FLOOR) { px = ex-1; py = ey; player.dir = 1; } // face east (came from west)
+                                else if (ex < MAP_W-1 && get_tile(ex+1, ey) == TILE_FLOOR) { px = ex+1; py = ey; player.dir = 3; } // face west (came from east)
+                                else if (ey > 0 && get_tile(ex, ey-1) == TILE_FLOOR) { px = ex; py = ey-1; player.dir = 0; } // face north (came from south)
+                                else if (ey < MAP_H-1 && get_tile(ex, ey+1) == TILE_FLOOR) { px = ex; py = ey+1; player.dir = 2; } // face south (came from north)
+                                player.x = px;
+                                player.y = py;
+                            } else {
+                                // For random floors, load from persistent vector
+                                set_level_data(floors[floor - 1].map);
+                                std::pair<int,int> prev_exit = floors[floor - 1].exit;
+                                int ex = prev_exit.first, ey = prev_exit.second;
+                                for (int d = 0; d < 4; ++d) {
+                                    int dx[4] = {0,1,0,-1}, dy[4] = {-1,0,1,0};
+                                    int px = ex + dx[d], py = ey + dy[d];
+                                    if (px >= 0 && px < MAP_W && py >= 0 && py < MAP_H && get_tile(px, py) == TILE_FLOOR) {
+                                        player.x = px;
+                                        player.y = py;
+                                        player.dir = d; // face the direction of the doorway (opposite of entry)
+                                        break;
+                                    }
+                                }
+                            }
+                            break;
+                        }
                     }
                 }
             }
@@ -169,7 +293,7 @@ int main(int argc, char* argv[]) {
             int ny = player.y + dy[player.dir];
             char facing = get_tile(nx, ny);
 
-            if (facing == TILE_DOORWAY) {
+            if (facing == TILE_ENTRANCE || facing == TILE_EXIT) {
                 show_doorway_indicator = true;
             }
         }
@@ -186,6 +310,20 @@ int main(int argc, char* argv[]) {
         }
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
+        // Draw floor number in top left when in game
+        if (in_game) {
+            char level_buf[32];
+            snprintf(level_buf, sizeof(level_buf), "Floor: %d", get_current_floor());
+            SDL_Color white = {255,255,255,255};
+            SDL_Surface* surf = TTF_RenderText_Blended(font, level_buf, white);
+            if (surf) {
+                SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                SDL_Rect rect = {20, 20, surf->w, surf->h};
+                SDL_RenderCopy(ren, tex, nullptr, &rect);
+                SDL_FreeSurface(surf);
+                SDL_DestroyTexture(tex);
+            }
+        }
         if (in_menu) {
             // Draw menu background image if loaded
             if (menu_bg_tex) {
