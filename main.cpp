@@ -144,7 +144,33 @@ int main(int argc, char* argv[]) {
                     static const int dx[4] = {0, 1, 0, -1};
                     static const int dy[4] = {-1, 0, 1, 0};
                     player_move(player, dx[player.dir], dy[player.dir]);
+                } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
+                    // Check if facing doorway
+                    static const int dx[4] = {0, 1, 0, -1};
+                    static const int dy[4] = {-1, 0, 1, 0};
+                    int nx = player.x + dx[player.dir];
+                    int ny = player.y + dy[player.dir];
+                    if (get_tile(nx, ny) == TILE_DOORWAY) {
+                        // Doorway effect: for now, reset player to start (stub for next level)
+                        player.x = 1;
+                        player.y = 1;
+                        // Optionally, print a message to console
+                        std::cout << "Doorway entered! (Stub: next level)" << std::endl;
+                    }
                 }
+            }
+        }
+        // --- Doorway indicator logic ---
+        bool show_doorway_indicator = false;
+        if (in_game) {
+            static const int dx[4] = {0, 1, 0, -1};
+            static const int dy[4] = {-1, 0, 1, 0};
+            int nx = player.x + dx[player.dir];
+            int ny = player.y + dy[player.dir];
+            char facing = get_tile(nx, ny);
+
+            if (facing == TILE_DOORWAY) {
+                show_doorway_indicator = true;
             }
         }
         // Mouse hover highlights (menu only)
@@ -197,6 +223,22 @@ int main(int argc, char* argv[]) {
             int bottom_h = win_h - top_h;
             render_dungeon(ren, player, win_w, top_h, bottom_h);
             render_minimap(ren, player, win_w, top_h, bottom_h);
+            // Draw doorway indicator if needed
+            if (show_doorway_indicator && font) {
+                const char* msg = "Press Enter to Enter Doorway";
+                SDL_Color fg = {255, 255, 64, 255};
+                SDL_Surface* surf = TTF_RenderUTF8_Blended(font, msg, fg);
+                if (surf) {
+                    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                    if (tex) {
+                        int tw = surf->w, th = surf->h;
+                        SDL_Rect dst = { (win_w-tw)/2, 32, tw, th };
+                        SDL_RenderCopy(ren, tex, nullptr, &dst);
+                        SDL_DestroyTexture(tex);
+                    }
+                    SDL_FreeSurface(surf);
+                }
+            }
         }
         SDL_RenderPresent(ren);
     }

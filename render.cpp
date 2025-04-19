@@ -144,7 +144,8 @@ void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
         map_y += step_y;
         side = 1;
       }
-      if (get_tile(map_x, map_y) == TILE_WALL)
+      char tile = get_tile(map_x, map_y);
+      if (tile == TILE_WALL || tile == TILE_DOORWAY)
         hit = 1;
     }
     // Calculate distance to wall
@@ -162,7 +163,12 @@ void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
     if (draw_end > top_h)
       draw_end = top_h;
     // Draw the vertical wall slice
-    if (g_wall_tex) {
+    char tile = get_tile(map_x, map_y);
+    if (tile == TILE_DOORWAY) {
+        // Draw doorways as dark gray
+        SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
+        SDL_RenderDrawLine(ren, x, draw_start, x, draw_end);
+    } else if (g_wall_tex && tile == TILE_WALL) {
       int tex_w, tex_h;
       SDL_QueryTexture(g_wall_tex, nullptr, nullptr, &tex_w, &tex_h);
       // Calculate texture X coordinate (simple, based on wall hit location)
@@ -210,19 +216,6 @@ void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
     return true;
   };
 
-  // Find entrance/exit positions
-  int ex = -1, ey = -1, xx = -1, xy = -1;
-  for (int j = 0; j < MAP_H; ++j)
-    for (int i = 0; i < MAP_W; ++i) {
-      if (level_data[j][i] == TILE_ENTRANCE) {
-        ex = i;
-        ey = j;
-      }
-      if (level_data[j][i] == TILE_EXIT) {
-        xx = i;
-        xy = j;
-      }
-    }
   // Classic raycasting sprite rendering for objects (Wolfenstein/Doom style)
   struct Sprite {
     SDL_Texture *tex;
@@ -230,11 +223,6 @@ void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
     float dist;
   };
   std::vector<Sprite> sprites;
-  // Collect entrance/exit (add items as needed)
-  if (ex >= 0 && ey >= 0)
-    sprites.push_back({g_item_tex, float(ex) + 0.5f, float(ey) + 0.5f, 0});
-  if (xx >= 0 && xy >= 0)
-    sprites.push_back({g_item_tex, float(xx) + 0.5f, float(xy) + 0.5f, 0});
   // Compute distance from player for sorting
   for (auto &s : sprites) {
     float dx = s.obj_x - pos_x;
@@ -332,10 +320,8 @@ void render_minimap(SDL_Renderer *ren, const Player &player, int win_w,
                        cell_h - 1};
       if (level_data[j][i] == TILE_WALL) {
         SDL_SetRenderDrawColor(ren, 80, 80, 80, 255);
-      } else if (level_data[j][i] == TILE_ENTRANCE) {
-        SDL_SetRenderDrawColor(ren, 0, 200, 0, 255);
-      } else if (level_data[j][i] == TILE_EXIT) {
-        SDL_SetRenderDrawColor(ren, 200, 0, 0, 255);
+      } else if (level_data[j][i] == TILE_DOORWAY) {
+        SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
       } else {
         SDL_SetRenderDrawColor(ren, 160, 160, 160, 255);
       }

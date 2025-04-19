@@ -1,7 +1,8 @@
 #include "player.h"
 
 void player_init(Player& player) {
-    find_entrance(player.x, player.y);
+    player.x = 1;
+    player.y = 1;
     player.dir = 1; // EAST
 }
 
