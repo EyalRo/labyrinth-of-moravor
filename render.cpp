@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <string>
 
 // Global texture pointers
 SDL_Texture *g_wall_tex = nullptr;
@@ -48,7 +49,7 @@ void free_dungeon_textures() {
 }
 
 // Raycasting-based dungeon renderer (Wolfenstein style)
-void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
+void render_dungeon(SDL_Renderer *ren, const Player &player, const Monster* monster, int win_w,
                     int top_h, int /*bottom_h*/) {
   // Colors
   SDL_Color ceil = {0, 0, 60, 255}; // Darker blue
@@ -297,63 +298,213 @@ void render_dungeon(SDL_Renderer *ren, const Player &player, int win_w,
   }
 }
 
-// Minimap overlay in bottom right
-void render_minimap(SDL_Renderer *ren, const Player &player, int win_w,
-                    int top_h, int bottom_h) {
-  // Minimap size
-  const int map_w = 120, map_h = 120;
-  const int cell_w = map_w / MAP_W;
-  const int cell_h = map_h / MAP_H;
-  const int margin = 12;
-  int x0 = win_w - map_w - margin;
-  int y0 = top_h + bottom_h - map_h - margin;
+// Draws party/status area under the window
+SDL_Rect g_attack_btn_rects[3];
 
-  // Semi-transparent background
-  SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-  SDL_SetRenderDrawColor(ren, 0, 0, 0, 128);
-  SDL_Rect bg = {x0 - 4, y0 - 4, map_w + 8, map_h + 8};
-  SDL_RenderFillRect(ren, &bg);
-  SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+void render_party_status(SDL_Renderer* ren, const Party& party, TTF_Font* font, int win_w, int top_h, int bottom_h) {
+    // Split the bottom area into 4 equal squares (left 3 = party, right = minimap)
+    int margin = 8;
+    int area_y = top_h + margin;
+    int area_h = bottom_h - 2 * margin;
+    int square_w = (win_w - 2 * margin) / 4;
+    int square_h = area_h;
 
-  // Draw map tiles
-  for (int j = 0; j < MAP_H; ++j) {
-    for (int i = 0; i < MAP_W; ++i) {
-      SDL_Rect cell = {x0 + i * cell_w, y0 + j * cell_h, cell_w - 1,
-                       cell_h - 1};
-      if (level_data[j][i] == TILE_WALL) {
-        SDL_SetRenderDrawColor(ren, 80, 80, 80, 255);
-      } else if (level_data[j][i] == TILE_ENTRANCE) {
-        SDL_SetRenderDrawColor(ren, 20, 80, 20, 255);
-      } else if (level_data[j][i] == TILE_EXIT) {
-        SDL_SetRenderDrawColor(ren, 80, 20, 30, 255);
-      } else {
-        SDL_SetRenderDrawColor(ren, 160, 160, 160, 255);
-      }
-      SDL_RenderFillRect(ren, &cell);
+    for (int i = 0; i < 4; ++i) {
+        int x = margin + i * square_w;
+        SDL_Rect box = {x, area_y, square_w, square_h};
+        SDL_SetRenderDrawColor(ren, 220, 220, 220, 255);
+        SDL_RenderFillRect(ren, &box);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderDrawRect(ren, &box);
+        if (i < 3) {
+            // Character panels
+            if (i < party.count) {
+                SDL_Rect inner = {box.x + 8, box.y + 8, box.w - 16, box.h - 16};
+                SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+                SDL_RenderFillRect(ren, &inner);
+                SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+                SDL_RenderDrawRect(ren, &inner);
+                const Player& p = party.members[i];
+                SDL_Color fg = {0,0,0,255};
+                int text_x = inner.x + 8;
+                int text_y = inner.y + 8;
+                int line_h = 22;
+                // Name
+                SDL_Surface* surf = TTF_RenderUTF8_Blended(font, p.name.c_str(), fg);
+                if (surf) {
+                    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                    if (tex) {
+                        SDL_Rect dst = {text_x, text_y, surf->w, surf->h};
+                        SDL_RenderCopy(ren, tex, nullptr, &dst);
+                        SDL_DestroyTexture(tex);
+                    }
+                    text_y += line_h;
+                    SDL_FreeSurface(surf);
+                }
+                // Stats: HP, AT, DF, AG (one per row)
+                char statbuf[32];
+                snprintf(statbuf, sizeof(statbuf), "HP %d/%d", p.hp, p.max_hp);
+                surf = TTF_RenderUTF8_Blended(font, statbuf, fg);
+                if (surf) {
+                    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                    if (tex) {
+                        SDL_Rect dst = {text_x, text_y, surf->w, surf->h};
+                        SDL_RenderCopy(ren, tex, nullptr, &dst);
+                        SDL_DestroyTexture(tex);
+                    }
+                    text_y += line_h;
+                    SDL_FreeSurface(surf);
+                }
+                snprintf(statbuf, sizeof(statbuf), "AT %d", p.attack);
+                surf = TTF_RenderUTF8_Blended(font, statbuf, fg);
+                if (surf) {
+                    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                    if (tex) {
+                        SDL_Rect dst = {text_x, text_y, surf->w, surf->h};
+                        SDL_RenderCopy(ren, tex, nullptr, &dst);
+                        SDL_DestroyTexture(tex);
+                    }
+                    text_y += line_h;
+                    SDL_FreeSurface(surf);
+                }
+                snprintf(statbuf, sizeof(statbuf), "DF %d", p.defense);
+                surf = TTF_RenderUTF8_Blended(font, statbuf, fg);
+                if (surf) {
+                    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                    if (tex) {
+                        SDL_Rect dst = {text_x, text_y, surf->w, surf->h};
+                        SDL_RenderCopy(ren, tex, nullptr, &dst);
+                        SDL_DestroyTexture(tex);
+                    }
+                    text_y += line_h;
+                    SDL_FreeSurface(surf);
+                }
+                snprintf(statbuf, sizeof(statbuf), "AG %d", p.agility);
+                surf = TTF_RenderUTF8_Blended(font, statbuf, fg);
+                if (surf) {
+                    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                    if (tex) {
+                        SDL_Rect dst = {text_x, text_y, surf->w, surf->h};
+                        SDL_RenderCopy(ren, tex, nullptr, &dst);
+                        SDL_DestroyTexture(tex);
+                    }
+                    text_y += line_h;
+                    SDL_FreeSurface(surf);
+                }
+                // Draw Attack button
+                int btn_w = inner.w - 16;
+                int btn_h = 32;
+                int btn_x = inner.x + 8;
+                int btn_y = inner.y + inner.h - btn_h - 8;
+                SDL_Rect btn_rect = {btn_x, btn_y, btn_w, btn_h};
+                g_attack_btn_rects[i] = btn_rect;
+                SDL_SetRenderDrawColor(ren, 200, 80, 80, 255);
+                SDL_RenderFillRect(ren, &btn_rect);
+                SDL_SetRenderDrawColor(ren, 60, 0, 0, 255);
+                SDL_RenderDrawRect(ren, &btn_rect);
+                // Button label
+                const char* attack_label = "Attack";
+                surf = TTF_RenderUTF8_Blended(font, attack_label, fg);
+                if (surf) {
+                    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                    if (tex) {
+                        SDL_Rect dst = {btn_x + (btn_w-surf->w)/2, btn_y + (btn_h-surf->h)/2, surf->w, surf->h};
+                        SDL_RenderCopy(ren, tex, nullptr, &dst);
+                        SDL_DestroyTexture(tex);
+                    }
+                    SDL_FreeSurface(surf);
+                }
+            } else {
+                SDL_Rect inner = {box.x + 8, box.y + 8, box.w - 16, box.h - 16};
+                SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
+                SDL_RenderFillRect(ren, &inner);
+                SDL_SetRenderDrawColor(ren, 120, 120, 120, 255);
+                SDL_RenderDrawRect(ren, &inner);
+                g_attack_btn_rects[i] = {0,0,0,0}; // No button for empty slot
+            }
+        }
+        // The 4th (rightmost) square is reserved for the minimap (drawn elsewhere)
     }
-  }
-  // Draw player
-  int px = x0 + int((player.x + 0.5f) * cell_w);
-  int py = y0 + int((player.y + 0.5f) * cell_h);
-  SDL_SetRenderDrawColor(ren, 255, 255, 0, 255);
-  SDL_Rect pcell = {px - 3, py - 3, 6, 6};
-  SDL_RenderFillRect(ren, &pcell);
-  // Draw facing direction
-  float dx = 0, dy = 0;
-  switch (player.dir) {
-  case 0:
-    dy = -1;
-    break;
-  case 1:
-    dx = 1;
-    break;
-  case 2:
-    dy = 1;
-    break;
-  case 3:
-    dx = -1;
-    break;
-  }
-  int fx = px + int(dx * 10), fy = py + int(dy * 10);
-  SDL_RenderDrawLine(ren, px, py, fx, fy);
+}
+
+
+
+// Minimap overlay in rightmost bottom square
+#include "main.cpp" // for floors and get_current_floor
+
+void render_minimap(SDL_Renderer *ren, const Player &player, int win_w,
+                    int top_h, int bottom_h)
+{
+    int margin = 8;
+    int area_y = top_h + margin;
+    int area_h = bottom_h - 2 * margin;
+    int square_w = (win_w - 2 * margin) / 4;
+    int x0 = margin + 3 * square_w;
+    int y0 = area_y;
+    int map_w = square_w;
+    int map_h = area_h;
+    int cell_w = map_w / MAP_W;
+    int cell_h = map_h / MAP_H;
+
+    // --- TEMP: Place monster on map as 'M' ---
+    char orig = 0;
+    int cf = get_current_floor();
+    if (cf >= 0 && cf < (int)floors.size()) {
+        const Monster& m = floors[cf].monster;
+        if (m.state != MonsterState::Dead) {
+            orig = level_data[m.y][m.x];
+            level_data[m.y][m.x] = 'M';
+        }
+    }
+
+    // Draw minimap background
+    SDL_SetRenderDrawColor(ren, 30, 30, 30, 220);
+    SDL_Rect bg = {x0, y0, map_w, map_h};
+    SDL_RenderFillRect(ren, &bg);
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+    SDL_RenderDrawRect(ren, &bg);
+
+    // Draw map tiles
+    for (int j = 0; j < MAP_H; ++j) {
+        for (int i = 0; i < MAP_W; ++i) {
+            SDL_Rect cell = {x0 + i * cell_w, y0 + j * cell_h, cell_w - 1, cell_h - 1};
+            if (level_data[j][i] == TILE_WALL) {
+                SDL_SetRenderDrawColor(ren, 80, 80, 80, 255);
+            } else if (level_data[j][i] == TILE_ENTRANCE) {
+                SDL_SetRenderDrawColor(ren, 20, 80, 20, 255);
+            } else if (level_data[j][i] == TILE_EXIT) {
+        SDL_SetRenderDrawColor(ren, 80, 20, 30, 255);
+    }
+    // Draw player
+    int px = x0 + int((player.x + 0.5f) * cell_w);
+    int py = y0 + int((player.y + 0.5f) * cell_h);
+    SDL_SetRenderDrawColor(ren, 255, 255, 0, 255);
+    SDL_Rect pcell = {px - 3, py - 3, 6, 6};
+    SDL_RenderFillRect(ren, &pcell);
+    // Draw facing direction
+    float dx = 0, dy = 0;
+    switch (player.dir) {
+    case 0:
+        dy = -1;
+        break;
+    case 1:
+        dx = 1;
+        break;
+    case 2:
+        dy = 1;
+        break;
+    case 3:
+        dx = -1;
+        break;
+    }
+    int fx = px + int(dx * 10), fy = py + int(dy * 10);
+    SDL_RenderDrawLine(ren, px, py, fx, fy);
+
+    // --- Restore monster tile ---
+    if (cf >= 0 && cf < (int)floors.size()) {
+        const Monster& m = floors[cf].monster;
+        if (m.state != MonsterState::Dead && orig) {
+            level_data[m.y][m.x] = orig;
+        }
+    }
 }

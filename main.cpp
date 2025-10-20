@@ -11,10 +11,13 @@
 struct FloorData {
     std::vector<std::string> map;
     std::pair<int,int> entrance, exit;
+    Monster monster;
 };
 static std::vector<FloorData> floors;
 
+
 int main(int argc, char* argv[]) {
+    std::cout << "[DEBUG] Game loading..." << std::endl;
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
         return 1;
@@ -90,6 +93,33 @@ int main(int argc, char* argv[]) {
     int mouse_x = 0, mouse_y = 0;
     bool in_game = false;
     // --- Player and Level State ---
+    // Party setup
+    Party party;
+    party.count = 1;
+    player_init(party.members[0]);
+
+    // Helper: find a walkable tile for monster spawn (not at player or exit)
+    auto find_monster_spawn = [](const std::vector<std::string>& map, int px, int py, int ex, int ey) {
+        // Try to find a walkable tile not at player or exit
+        for (int y = 1; y < (int)map.size()-1; ++y) {
+            for (int x = 1; x < (int)map[0].size()-1; ++x) {
+                if (map[y][x] == '.' && !(x == px && y == py) && !(x == ex && y == ey)) {
+                    return std::make_pair(x, y);
+                }
+            }
+        }
+        // Fallback: try to find any walkable tile
+        for (int y = 1; y < (int)map.size()-1; ++y) {
+            for (int x = 1; x < (int)map[0].size()-1; ++x) {
+                if (map[y][x] == '.') {
+                    return std::make_pair(x, y);
+                }
+            }
+        }
+        // As a last resort, return (1,1)
+        return std::make_pair(1, 1);
+    };
+
     // Initialize persistent floors
     floors.clear();
     // Static map as floor 0
@@ -110,24 +140,34 @@ int main(int argc, char* argv[]) {
         "#..###.##..#...#",
         "##############X#"
     };
-    // Find exit position for static map
+    // Find exit position for static map (look for 'X')
     std::pair<int,int> static_exit = {-1, -1};
     for (int y = 0; y < (int)static_map.size(); ++y) {
         for (int x = 0; x < (int)static_map[0].size(); ++x) {
-            if (static_map[y][x] == 'D') static_exit = {x, y};
+            if (static_map[y][x] == 'X') static_exit = {x, y};
         }
     }
+    // Find monster spawn for static map
+    auto monster_spawn = find_monster_spawn(static_map, 1, 1, static_exit.first, static_exit.second);
+    Monster static_monster;
+    static_monster.x = monster_spawn.first;
+    static_monster.y = monster_spawn.second;
+    static_monster.dir = 1;
+    static_monster.state = MonsterState::Idle;
+    // Place 'M' in the map for the monster
+    static_map[static_monster.y][static_monster.x] = 'M';
+    std::cout << "[DEBUG] Monster spawned at: (" << static_monster.x << ", " << static_monster.y << ") on static floor 0" << std::endl;
     floors.push_back(FloorData{
         static_map,
-        {1,1}, static_exit
+        {1,1}, static_exit,
+        static_monster
     });
     set_level_data(floors[0].map);
 
-    Player player;
-    player_init(player);
 
 
     while (!quit) {
+        // Main loop
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) quit = true;
             else if (in_menu && e.type == SDL_KEYDOWN) {
@@ -171,26 +211,160 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
+            } else if (in_game && e.type == SDL_MOUSEBUTTONDOWN) {
+                if (e.button.button == SDL_BUTTON_LEFT) {
+                    int mx = e.button.x, my = e.button.y;
+                    for (int i = 0; i < party.count; ++i) {
+                        SDL_Rect btn = g_attack_btn_rects[i];
+                        if (btn.w > 0 && btn.h > 0 &&
+                            mx >= btn.x && mx < btn.x + btn.w &&
+                            my >= btn.y && my < btn.y + btn.h) {
+                            std::cout << "Character " << (i+1) << " attacks!" << std::endl;
+                            // TODO: trigger actual attack logic
+                        }
+                    }
+                }
             } else if (in_game && e.type == SDL_KEYDOWN) {
                 // --- GAME CONTROLS ---
+                Player& player = party.members[0];
                 if (e.key.keysym.sym == SDLK_ESCAPE) {
                     in_game = false;
                     in_menu = true;
                 } else if (e.key.keysym.sym == SDLK_LEFT) {
-                    player_turn(player, -1);
+                    player_turn(party.members[0], -1);
+                    // Monster AI and debug after player turn
+                    int curr_floor = get_current_floor();
+                    if (curr_floor >= 0 && curr_floor < (int)floors.size()) {
+                        Monster& monster = floors[curr_floor].monster;
+                        std::string action;
+                        if (monster.state == MonsterState::Idle) {
+                            if (rand() % 2 == 0) {
+                                monster.dir = rand() % 4;
+                                action = "Turned";
+                            } else {
+                                static const int dx[4] = {0, 1, 0, -1};
+                                static const int dy[4] = {-1, 0, 1, 0};
+                                int nx = monster.x + dx[monster.dir];
+                                int ny = monster.y + dy[monster.dir];
+                                char tile = get_tile(nx, ny);
+                                if (is_walkable(tile)) {
+                                    if (floors[curr_floor].map[monster.y][monster.x] == 'M')
+                                        floors[curr_floor].map[monster.y][monster.x] = '.';
+                                    monster.x = nx;
+                                    monster.y = ny;
+                                    floors[curr_floor].map[monster.y][monster.x] = 'M';
+                                    action = "Walked";
+                                } else {
+                                    action = "Idle (blocked)";
+                                }
+                            }
+                        } else if (monster.state == MonsterState::Dead) {
+                            action = "Dead";
+                        } else {
+                            action = "Unknown";
+                        }
+                        const char* state_str = (monster.state == MonsterState::Idle ? "Idle" : (monster.state == MonsterState::Agro ? "Agro" : "Dead"));
+                        const char* dir_strs[4] = {"N", "E", "S", "W"};
+                        std::cout << "[DEBUG] Monster: state=" << state_str
+                                  << ", pos=(" << monster.x << "," << monster.y << ")"
+                                  << ", dir=" << dir_strs[monster.dir%4]
+                                  << ", action=" << action << std::endl;
+std::cout << "[DEBUG] Player: pos=(" << party.members[0].x << "," << party.members[0].y << ")"
+          << ", Monster: pos=(" << monster.x << "," << monster.y << ")" << std::endl;
+                    }
                 } else if (e.key.keysym.sym == SDLK_RIGHT) {
-                    player_turn(player, 1);
+                    player_turn(party.members[0], 1);
+                    // Monster AI and debug after player turn
+                    int curr_floor = get_current_floor();
+                    if (curr_floor >= 0 && curr_floor < (int)floors.size()) {
+                        Monster& monster = floors[curr_floor].monster;
+                        std::string action;
+                        if (monster.state == MonsterState::Idle) {
+                            if (rand() % 2 == 0) {
+                                monster.dir = rand() % 4;
+                                action = "Turned";
+                            } else {
+                                static const int dx[4] = {0, 1, 0, -1};
+                                static const int dy[4] = {-1, 0, 1, 0};
+                                int nx = monster.x + dx[monster.dir];
+                                int ny = monster.y + dy[monster.dir];
+                                char tile = get_tile(nx, ny);
+                                if (is_walkable(tile)) {
+                                    if (floors[curr_floor].map[monster.y][monster.x] == 'M')
+                                        floors[curr_floor].map[monster.y][monster.x] = '.';
+                                    monster.x = nx;
+                                    monster.y = ny;
+                                    floors[curr_floor].map[monster.y][monster.x] = 'M';
+                                    action = "Walked";
+                                } else {
+                                    action = "Idle (blocked)";
+                                }
+                            }
+                        } else if (monster.state == MonsterState::Dead) {
+                            action = "Dead";
+                        } else {
+                            action = "Unknown";
+                        }
+                        const char* state_str = (monster.state == MonsterState::Idle ? "Idle" : (monster.state == MonsterState::Agro ? "Agro" : "Dead"));
+                        const char* dir_strs[4] = {"N", "E", "S", "W"};
+                        std::cout << "[DEBUG] Monster: state=" << state_str
+                                  << ", pos=(" << monster.x << "," << monster.y << ")"
+                                  << ", dir=" << dir_strs[monster.dir%4]
+                                  << ", action=" << action << std::endl;
+std::cout << "[DEBUG] Player: pos=(" << party.members[0].x << "," << party.members[0].y << ")"
+          << ", Monster: pos=(" << monster.x << "," << monster.y << ")" << std::endl;
+                    }
                 } else if (e.key.keysym.sym == SDLK_UP) {
                     // Move forward in facing direction
                     static const int dx[4] = {0, 1, 0, -1};
                     static const int dy[4] = {-1, 0, 1, 0};
-                    player_move(player, dx[player.dir], dy[player.dir]);
+                    player_move(party.members[0], dx[party.members[0].dir], dy[party.members[0].dir]);
+                    // Monster AI and debug after player move
+                    int curr_floor = get_current_floor();
+                    if (curr_floor >= 0 && curr_floor < (int)floors.size()) {
+                        Monster& monster = floors[curr_floor].monster;
+                        std::string action;
+                        if (monster.state == MonsterState::Idle) {
+                            if (rand() % 2 == 0) {
+                                monster.dir = rand() % 4;
+                                action = "Turned";
+                            } else {
+                                static const int dx[4] = {0, 1, 0, -1};
+                                static const int dy[4] = {-1, 0, 1, 0};
+                                int nx = monster.x + dx[monster.dir];
+                                int ny = monster.y + dy[monster.dir];
+                                char tile = get_tile(nx, ny);
+                                if (is_walkable(tile)) {
+                                    if (floors[curr_floor].map[monster.y][monster.x] == 'M')
+                                        floors[curr_floor].map[monster.y][monster.x] = '.';
+                                    monster.x = nx;
+                                    monster.y = ny;
+                                    floors[curr_floor].map[monster.y][monster.x] = 'M';
+                                    action = "Walked";
+                                } else {
+                                    action = "Idle (blocked)";
+                                }
+                            }
+                        } else if (monster.state == MonsterState::Dead) {
+                            action = "Dead";
+                        } else {
+                            action = "Unknown";
+                        }
+                        const char* state_str = (monster.state == MonsterState::Idle ? "Idle" : (monster.state == MonsterState::Agro ? "Agro" : "Dead"));
+                        const char* dir_strs[4] = {"N", "E", "S", "W"};
+                        std::cout << "[DEBUG] Monster: state=" << state_str
+                                  << ", pos=(" << monster.x << "," << monster.y << ")"
+                                  << ", dir=" << dir_strs[monster.dir%4]
+                                  << ", action=" << action << std::endl;
+std::cout << "[DEBUG] Player: pos=(" << party.members[0].x << "," << party.members[0].y << ")"
+          << ", Monster: pos=(" << monster.x << "," << monster.y << ")" << std::endl;
+                    }
                 } else if (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) {
                     // Check if facing doorway
                     static const int dx[4] = {0, 1, 0, -1};
                     static const int dy[4] = {-1, 0, 1, 0};
-                    int nx = player.x + dx[player.dir];
-                    int ny = player.y + dy[player.dir];
+                    int nx = party.members[0].x + dx[party.members[0].dir];
+                    int ny = party.members[0].y + dy[party.members[0].dir];
                     int floor = get_current_floor();
                     std::pair<int,int> curr_entrance = get_entrance_pos();
                     std::pair<int,int> curr_exit = get_exit_pos();
@@ -216,9 +390,9 @@ int main(int argc, char* argv[]) {
                                 for (int d = 0; d < 4; ++d) {
                                     int px = ex + dx[d], py = ey + dy[d];
                                     if (px >= 0 && px < MAP_W && py >= 0 && py < MAP_H && get_tile(px, py) == TILE_FLOOR) {
-                                        player.x = px;
-                                        player.y = py;
-                                        player.dir = d; // face the direction of the doorway (opposite of entry)
+                                        party.members[0].x = px;
+                                        party.members[0].y = py;
+                                        party.members[0].dir = d; // face the direction of the doorway (opposite of entry)
                                         break;
                                     }
                                 }
@@ -226,7 +400,15 @@ int main(int argc, char* argv[]) {
                                 // Generate new floor
                                 std::pair<int,int> entrance, exitp;
                                 std::vector<std::string> next_map = generate_random_floor(MAP_W, MAP_H, entrance, exitp);
-                                floors.push_back(FloorData{next_map, entrance, exitp});
+                                // Spawn monster for this new floor
+                                auto monster_spawn = find_monster_spawn(next_map, entrance.first, entrance.second, exitp.first, exitp.second);
+                                Monster floor_monster;
+                                floor_monster.x = monster_spawn.first;
+                                floor_monster.y = monster_spawn.second;
+                                floor_monster.dir = 1;
+                                floor_monster.state = MonsterState::Idle;
+                                std::cout << "[DEBUG] Monster spawned at: (" << floor_monster.x << ", " << floor_monster.y << ") on floor " << floors.size() << std::endl;
+                                floors.push_back(FloorData{next_map, entrance, exitp, floor_monster});
                                 set_level_data(next_map);
                                 // Place player by entrance
                                 int dx[4] = {0,1,0,-1}, dy[4] = {-1,0,1,0};
@@ -234,9 +416,9 @@ int main(int argc, char* argv[]) {
                                 for (int d = 0; d < 4; ++d) {
                                     int px = ex + dx[d], py = ey + dy[d];
                                     if (px >= 0 && px < MAP_W && py >= 0 && py < MAP_H && get_tile(px, py) == TILE_FLOOR) {
-                                        player.x = px;
-                                        player.y = py;
-                                        player.dir = d; // face the direction of the doorway (opposite of entry)
+                                        party.members[0].x = px;
+                                        party.members[0].y = py;
+                                        party.members[0].dir = d; // face the direction of the doorway (opposite of entry)
                                         break;
                                     }
                                 }
@@ -256,12 +438,12 @@ int main(int argc, char* argv[]) {
                                 int ex = static_exit.first, ey = static_exit.second;
                                 int px = ex, py = ey;
                                 // Try all 4 inward directions
-                                if (ex > 0 && get_tile(ex-1, ey) == TILE_FLOOR) { px = ex-1; py = ey; player.dir = 1; } // face east (came from west)
-                                else if (ex < MAP_W-1 && get_tile(ex+1, ey) == TILE_FLOOR) { px = ex+1; py = ey; player.dir = 3; } // face west (came from east)
-                                else if (ey > 0 && get_tile(ex, ey-1) == TILE_FLOOR) { px = ex; py = ey-1; player.dir = 0; } // face north (came from south)
-                                else if (ey < MAP_H-1 && get_tile(ex, ey+1) == TILE_FLOOR) { px = ex; py = ey+1; player.dir = 2; } // face south (came from north)
-                                player.x = px;
-                                player.y = py;
+                                if (ex > 0 && get_tile(ex-1, ey) == TILE_FLOOR) { px = ex-1; py = ey; party.members[0].dir = 1; } // face east (came from west)
+                                else if (ex < MAP_W-1 && get_tile(ex+1, ey) == TILE_FLOOR) { px = ex+1; py = ey; party.members[0].dir = 3; } // face west (came from east)
+                                else if (ey > 0 && get_tile(ex, ey-1) == TILE_FLOOR) { px = ex; py = ey-1; party.members[0].dir = 0; } // face north (came from south)
+                                else if (ey < MAP_H-1 && get_tile(ex, ey+1) == TILE_FLOOR) { px = ex; py = ey+1; party.members[0].dir = 2; } // face south (came from north)
+                                party.members[0].x = px;
+                                party.members[0].y = py;
                             } else {
                                 // For random floors, load from persistent vector
                                 set_level_data(floors[floor - 1].map);
@@ -271,9 +453,9 @@ int main(int argc, char* argv[]) {
                                     int dx[4] = {0,1,0,-1}, dy[4] = {-1,0,1,0};
                                     int px = ex + dx[d], py = ey + dy[d];
                                     if (px >= 0 && px < MAP_W && py >= 0 && py < MAP_H && get_tile(px, py) == TILE_FLOOR) {
-                                        player.x = px;
-                                        player.y = py;
-                                        player.dir = d; // face the direction of the doorway (opposite of entry)
+                                        party.members[0].x = px;
+                                        party.members[0].y = py;
+                                        party.members[0].dir = d; // face the direction of the doorway (opposite of entry)
                                         break;
                                     }
                                 }
@@ -289,8 +471,8 @@ int main(int argc, char* argv[]) {
         if (in_game) {
             static const int dx[4] = {0, 1, 0, -1};
             static const int dy[4] = {-1, 0, 1, 0};
-            int nx = player.x + dx[player.dir];
-            int ny = player.y + dy[player.dir];
+            int nx = party.members[0].x + dx[party.members[0].dir];
+            int ny = party.members[0].y + dy[party.members[0].dir];
             char facing = get_tile(nx, ny);
 
             if (facing == TILE_ENTRANCE || facing == TILE_EXIT) {
@@ -359,8 +541,54 @@ int main(int argc, char* argv[]) {
             SDL_GetWindowSize(win, &win_w, &win_h);
             int top_h = win_h * 0.6;
             int bottom_h = win_h - top_h;
-            render_dungeon(ren, player, win_w, top_h, bottom_h);
-            render_minimap(ren, player, win_w, top_h, bottom_h);
+            // --- Monster AI turn (idle: random turn or walk) ---
+            int curr_floor = get_current_floor();
+            if (curr_floor >= 0 && curr_floor < (int)floors.size()) {
+                Monster& monster = floors[curr_floor].monster;
+                std::string action;
+                if (monster.state == MonsterState::Idle) {
+                    if (rand() % 2 == 0) {
+                        // Turn: random direction
+                        monster.dir = rand() % 4;
+                        action = "Turned";
+                    } else {
+                        // Walk: move forward if possible
+                        static const int dx[4] = {0, 1, 0, -1};
+                        static const int dy[4] = {-1, 0, 1, 0};
+                        int nx = monster.x + dx[monster.dir];
+                        int ny = monster.y + dy[monster.dir];
+                        char tile = get_tile(nx, ny);
+                        if (is_walkable(tile)) {
+                            // Remove 'M' from old location
+                            if (floors[curr_floor].map[monster.y][monster.x] == 'M')
+                                floors[curr_floor].map[monster.y][monster.x] = '.';
+                            monster.x = nx;
+                            monster.y = ny;
+                            // Place 'M' in new location
+                            floors[curr_floor].map[monster.y][monster.x] = 'M';
+                            action = "Walked";
+                        } else {
+                            action = "Idle (blocked)";
+                        }
+                    }
+                } else if (monster.state == MonsterState::Dead) {
+                    action = "Dead";
+                } else {
+                    action = "Unknown";
+                }
+                // Debug output
+                const char* state_str = (monster.state == MonsterState::Idle ? "Idle" : (monster.state == MonsterState::Agro ? "Agro" : "Dead"));
+                const char* dir_strs[4] = {"N", "E", "S", "W"};
+                std::cout << "[DEBUG] Monster: state=" << state_str
+                          << ", pos=(" << monster.x << "," << monster.y << ")"
+                          << ", dir=" << dir_strs[monster.dir%4]
+                          << ", action=" << action << std::endl;
+                render_dungeon(ren, party.members[0], &monster, win_w, top_h, bottom_h);
+            } else {
+                render_dungeon(ren, party.members[0], nullptr, win_w, top_h, bottom_h);
+            }
+            render_party_status(ren, party, font, win_w, top_h, bottom_h);
+            render_minimap(ren, party.members[0], win_w, top_h, bottom_h);
             // Draw doorway indicator if needed
             if (show_doorway_indicator && font) {
                 const char* msg = "Press Enter to Enter Doorway";
@@ -381,14 +609,14 @@ int main(int argc, char* argv[]) {
         SDL_RenderPresent(ren);
     }
     // Cleanup resources in reverse order of creation
-    // Free menu background texture
-    if (menu_bg_tex) SDL_DestroyTexture(menu_bg_tex);
-    TTF_CloseFont(font);
-    TTF_Quit();
+    std::cout << "[DEBUG] Game exiting..." << std::endl;
     free_dungeon_textures();
-    IMG_Quit();
+    if (menu_bg_tex) SDL_DestroyTexture(menu_bg_tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
+    IMG_Quit();
+    TTF_CloseFont(font);
+    TTF_Quit();
     SDL_Quit();
     return 0;
 }
